@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/url_shortener
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:13
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=url_shortener
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:6
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/url_shortener_test
+      - REDIS_URL=redis://redis:6379/1
+      - TESTING=1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./htmlcov:/app/htmlcov
+    command: >
+      sh -c "PGPASSWORD=postgres psql -h db -U postgres -c 'CREATE DATABASE url_shortener_test;' || true &&
+             pytest -v --cov=src --cov-report=html --cov-report=term-missing"
+
+  loadtest:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    ports:
+      - "8089:8089"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/url_shortener
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - web
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+    command: locust -f /app/tests/load/locustfile.py --host http://web:8000
+
+volumes:
+  postgres_data:
+  redis_data: 
